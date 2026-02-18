@@ -57,8 +57,6 @@ devbox run -- bandit -r src/ -ll
 devbox run -- safety check --continue-on-error
 ```
 
-See [CI Pipeline Guide](docs/CI_PIPELINE_GUIDE.md) for detailed instructions.
-
 ## Pipeline Execution
 
 Pipelines run automatically on:
