@@ -1,0 +1,5 @@
+event_id,patient_id,event_date,description,severity
+AE001,PAT000001,2024-01-20,Headache,Mild
+AE002,PAT000002,2024-01-21,Nausea,Moderate
+AE003,PAT000003,2024-01-22,Dizziness,Severe
+AE004,PAT000004,2024-01-23,Fatigue,Mild

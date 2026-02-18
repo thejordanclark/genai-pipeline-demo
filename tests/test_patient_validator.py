@@ -19,7 +19,7 @@ def valid_patient():
         "gender": "F",
         "enrollment_date": "2024-01-15",
         "site_id": "SITE001",
-        "consent_signed": True
+        "consent_signed": True,
     }
 
 
@@ -50,3 +50,14 @@ def test_unsigned_consent(validator, valid_patient):
     valid_patient["consent_signed"] = False
     is_valid, errors = validator.validate(valid_patient)
     assert is_valid is False
+
+
+def test_future_enrollment_date(validator, valid_patient):
+    """Test enrollment date in the future."""
+    from datetime import datetime, timedelta
+
+    future_date = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
+    valid_patient["enrollment_date"] = future_date
+    is_valid, errors = validator.validate(valid_patient)
+    assert is_valid is False
+    assert any("future" in error.lower() for error in errors)

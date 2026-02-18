@@ -22,21 +22,42 @@ This repository demonstrates AI-assisted CI/CD pipeline development for GxP-vali
 
 ## Running Locally
 
+### Quick Setup
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+# Using devbox (recommended)
+devbox shell
 
-# Run tests
-pytest tests/ --cov=src --cov-report=html
+# Or install dependencies manually
+pip install -r requirements.txt
+```
+
+### Run Quality Checks
+
+#### All Checks at Once
+```bash
+./scripts/pre-push-checks.sh
+```
+
+#### Individual Checks
+```bash
+# Run tests with coverage
+devbox run -- pytest tests/ --cov=src --cov-report=html:reports/coverage
+
+# Check code formatting
+devbox run -- black --check src/ tests/
+
+# Apply code formatting
+devbox run -- black src/ tests/
 
 # Run linting
-flake8 src/ tests/
-black --check src/ tests/
+devbox run -- flake8 src/ tests/ --max-line-length=100
 
-# Run security scan
-bandit -r src/
-safety check
+# Run security scans
+devbox run -- bandit -r src/ -ll
+devbox run -- safety check --continue-on-error
 ```
+
+See [CI Pipeline Guide](docs/CI_PIPELINE_GUIDE.md) for detailed instructions.
 
 ## Pipeline Execution
 
