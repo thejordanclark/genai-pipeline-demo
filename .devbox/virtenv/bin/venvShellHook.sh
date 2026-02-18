@@ -1,0 +1,1 @@
+/Users/jtclark/Nextcloud/Projects/Training/Courses/ABC/genai-pipeline-demo/.devbox/virtenv/python/bin/venvShellHook.sh
