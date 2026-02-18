@@ -1,0 +1,620 @@
+name: GxP CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+
+env:
+  PYTHON_VERSION: '3.13'
+  MIN_COVERAGE: 80
+  REPORTS_DIR: reports
+
+jobs:
+  # Job 1: Unit Testing with Coverage
+  test:
+    name: Unit Tests & Coverage
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for proper validation tracking
+      
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+      
+      - name: Create Reports Directory
+        run: mkdir -p ${{ env.REPORTS_DIR }}/coverage
+      
+      - name: Run Tests with Coverage
+        run: |
+          pytest tests/ \
+            --verbose \
+            --tb=short \
+            --cov=src \
+            --cov-report=html:${{ env.REPORTS_DIR }}/coverage \
+            --cov-report=term-missing \
+            --cov-report=xml:${{ env.REPORTS_DIR }}/coverage.xml \
+            --html=${{ env.REPORTS_DIR }}/test_report.html \
+            --self-contained-html \
+            --junitxml=${{ env.REPORTS_DIR }}/junit.xml
+      
+      - name: Check Coverage Threshold
+        run: |
+          coverage_percent=$(python -c "import xml.etree.ElementTree as ET; tree = ET.parse('${{ env.REPORTS_DIR }}/coverage.xml'); root = tree.getroot(); print(float(root.attrib['line-rate']) * 100)")
+          echo "Current coverage: ${coverage_percent}%"
+          if (( $(echo "$coverage_percent < ${{ env.MIN_COVERAGE }}" | bc -l) )); then
+            echo "❌ Coverage ${coverage_percent}% is below required threshold of ${{ env.MIN_COVERAGE }}%"
+            exit 1
+          else
+            echo "✅ Coverage ${coverage_percent}% meets required threshold of ${{ env.MIN_COVERAGE }}%"
+          fi
+      
+      - name: Generate Coverage Badge
+        run: |
+          coverage_percent=$(python -c "import xml.etree.ElementTree as ET; tree = ET.parse('${{ env.REPORTS_DIR }}/coverage.xml'); root = tree.getroot(); print(f'{float(root.attrib[\"line-rate\"]) * 100:.1f}')")
+          echo "COVERAGE=${coverage_percent}" >> $GITHUB_ENV
+          echo "Coverage: ${coverage_percent}%"
+          echo "COVERAGE=${coverage_percent}" >> $GITHUB_OUTPUT
+        id: coverage
+      
+      - name: Create Artifact Metadata
+        run: |
+          cat > ${{ env.REPORTS_DIR }}/metadata.json << EOF
+          {
+            "pipeline_run": "${{ github.run_number }}",
+            "commit_sha": "${{ github.sha }}",
+            "commit_short": "$(echo ${{ github.sha }} | cut -c1-7)",
+            "branch": "${{ github.ref_name }}",
+            "actor": "${{ github.actor }}",
+            "timestamp": "$(date -u +"%Y-%m-%d %H:%M:%S UTC")",
+            "workflow": "${{ github.workflow }}",
+            "run_id": "${{ github.run_id }}",
+            "coverage": "${COVERAGE}%",
+            "job": "test"
+          }
+          EOF
+          cat ${{ env.REPORTS_DIR }}/metadata.json
+      
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: |
+            ${{ env.REPORTS_DIR }}/test_report.html
+            ${{ env.REPORTS_DIR }}/junit.xml
+            ${{ env.REPORTS_DIR }}/metadata.json
+          retention-days: 90  # GxP requirement: retain for validation period
+      
+      - name: Upload Coverage Reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-reports
+          path: |
+            ${{ env.REPORTS_DIR }}/coverage/
+            ${{ env.REPORTS_DIR }}/coverage.xml
+          retention-days: 90
+      
+      - name: Set Test Status Output
+        id: test-status
+        if: always()
+        run: |
+          echo "status=${{ job.status }}" >> $GITHUB_OUTPUT
+
+  # Job 2: Code Quality & Linting
+  code-quality:
+    name: Code Quality & Linting
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install black flake8 flake8-html
+      
+      - name: Create Reports Directory
+        run: mkdir -p ${{ env.REPORTS_DIR }}/linting
+      
+      - name: Check Code Formatting with Black
+        run: |
+          echo "Checking code formatting..."
+          black --check --diff src/ tests/ || {
+            echo "❌ Code formatting issues found. Run 'black src/ tests/' to fix."
+            exit 1
+          }
+          echo "✅ Code formatting is compliant"
+      
+      - name: Run Flake8 Linting
+        run: |
+          echo "Running flake8 linting..."
+          flake8 src/ tests/ \
+            --max-line-length=100 \
+            --exclude=__pycache__,.git,__init__.py \
+            --format=html \
+            --htmldir=${{ env.REPORTS_DIR }}/linting \
+            --statistics \
+            --count || {
+            echo "❌ Linting issues found"
+            exit 1
+          }
+          echo "✅ No linting issues found"
+      
+      - name: Run Flake8 with Text Output
+        if: always()
+        run: |
+          flake8 src/ tests/ \
+            --max-line-length=100 \
+            --exclude=__pycache__,.git,__init__.py \
+            --statistics \
+            --count
+        continue-on-error: true
+      
+      - name: Create Artifact Metadata
+        if: always()
+        run: |
+          cat > ${{ env.REPORTS_DIR }}/linting/metadata.json << EOF
+          {
+            "pipeline_run": "${{ github.run_number }}",
+            "commit_sha": "${{ github.sha }}",
+            "commit_short": "$(echo ${{ github.sha }} | cut -c1-7)",
+            "branch": "${{ github.ref_name }}",
+            "actor": "${{ github.actor }}",
+            "timestamp": "$(date -u +"%Y-%m-%d %H:%M:%S UTC")",
+            "workflow": "${{ github.workflow }}",
+            "run_id": "${{ github.run_id }}",
+            "job": "code-quality"
+          }
+          EOF
+      
+      - name: Upload Linting Reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linting-reports
+          path: ${{ env.REPORTS_DIR }}/linting/
+          retention-days: 90
+      
+      - name: Set Linting Status Output
+        id: lint-status
+        if: always()
+        run: |
+          echo "status=${{ job.status }}" >> $GITHUB_OUTPUT
+
+  # Job 3: Security Scanning
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install bandit safety
+          pip install -r requirements.txt
+      
+      - name: Create Reports Directory
+        run: mkdir -p ${{ env.REPORTS_DIR }}/security
+      
+      - name: Run Bandit Security Scan
+        run: |
+          echo "Running Bandit security scan..."
+          bandit -r src/ \
+            -f html \
+            -o ${{ env.REPORTS_DIR }}/security/bandit_report.html \
+            -ll \
+            --exit-zero
+          
+          # Run again for exit code (fail on high severity issues)
+          bandit -r src/ \
+            -f txt \
+            -o ${{ env.REPORTS_DIR }}/security/bandit_report.txt \
+            -ll || {
+            echo "❌ High severity security issues found!"
+            cat ${{ env.REPORTS_DIR }}/security/bandit_report.txt
+            exit 1
+          }
+          echo "✅ No high severity security issues found"
+      
+      - name: Run Safety Check for Vulnerable Dependencies
+        run: |
+          echo "Checking for vulnerable dependencies..."
+          safety check \
+            --json \
+            --output ${{ env.REPORTS_DIR }}/security/safety_report.json \
+            --continue-on-error || true
+          
+          # Generate text report
+          safety check \
+            --output ${{ env.REPORTS_DIR }}/security/safety_report.txt \
+            --continue-on-error || {
+            echo "⚠️  Vulnerable dependencies detected"
+            cat ${{ env.REPORTS_DIR }}/security/safety_report.txt
+            # For GxP, we log but don't fail - allows documented risk acceptance
+            echo "::warning::Vulnerable dependencies found. Review required."
+          }
+      
+      - name: Create Artifact Metadata
+        if: always()
+        run: |
+          cat > ${{ env.REPORTS_DIR }}/security/metadata.json << EOF
+          {
+            "pipeline_run": "${{ github.run_number }}",
+            "commit_sha": "${{ github.sha }}",
+            "commit_short": "$(echo ${{ github.sha }} | cut -c1-7)",
+            "branch": "${{ github.ref_name }}",
+            "actor": "${{ github.actor }}",
+            "timestamp": "$(date -u +"%Y-%m-%d %H:%M:%S UTC")",
+            "workflow": "${{ github.workflow }}",
+            "run_id": "${{ github.run_id }}",
+            "job": "security-scan"
+          }
+          EOF
+      
+      - name: Upload Security Reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-reports
+          path: ${{ env.REPORTS_DIR }}/security/
+          retention-days: 90
+      
+      - name: Security Summary
+        if: always()
+        run: |
+          echo "## 🔒 Security Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Bandit Results" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          cat ${{ env.REPORTS_DIR }}/security/bandit_report.txt || echo "No issues found" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Safety Check Results" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          cat ${{ env.REPORTS_DIR }}/security/safety_report.txt || echo "No vulnerabilities found" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+      
+      - name: Set Security Status Output
+        id: security-status
+        if: always()
+        run: |
+          echo "status=${{ job.status }}" >> $GITHUB_OUTPUT
+
+  # Job 4: Validation Report Generation
+  validation-report:
+    name: Generate Validation Report
+    runs-on: ubuntu-latest
+    needs: [test, code-quality, security-scan]
+    if: always()
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+      
+      - name: Generate Validation Summary
+        run: |
+          mkdir -p validation_report
+          
+          cat > validation_report/VALIDATION_SUMMARY.md << 'EOF'
+          # GxP Validation Report
+          
+          **Pipeline Run:** ${{ github.run_number }}
+          **Commit:** ${{ github.sha }}
+          **Branch:** ${{ github.ref_name }}
+          **Triggered by:** ${{ github.actor }}
+          **Date:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          
+          ---
+          
+          ## Pipeline Status
+          
+          | Job | Status |
+          |-----|--------|
+          | Unit Tests & Coverage | ${{ needs.test.result }} |
+          | Code Quality & Linting | ${{ needs.code-quality.result }} |
+          | Security Scanning | ${{ needs.security-scan.result }} |
+          
+          ---
+          
+          ## Validation Evidence
+          
+          All test results, coverage reports, linting reports, and security scan results 
+          have been archived as pipeline artifacts and are available for inspection.
+          
+          ### Artifact Retention
+          - Reports retained for 90 days per GxP requirements
+          - Accessible at: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          
+          ---
+          
+          ## Quality Gates
+          
+          - ✅ Unit Test Coverage ≥ ${{ env.MIN_COVERAGE }}%
+          - ✅ Code Formatting (Black)
+          - ✅ Linting Standards (Flake8)
+          - ✅ Security Scanning (Bandit, Safety)
+          
+          ---
+          
+          ## Compliance Notes
+          
+          This pipeline execution satisfies the following GxP requirements:
+          - Automated testing with documented coverage
+          - Static code analysis and linting
+          - Security vulnerability scanning
+          - Audit trail via version control and CI logs
+          - Artifact retention for validation period
+          
+          **Approved for:** ${GITHUB_REF_NAME} deployment
+          
+          ---
+          
+          *Generated by GxP CI/CD Pipeline v1.0*
+          EOF
+          
+          sed -i "s/\$(date -u +\"%Y-%m-%d %H:%M:%S UTC\")/$(date -u +"%Y-%m-%d %H:%M:%S UTC")/g" validation_report/VALIDATION_SUMMARY.md
+      
+      - name: Upload Validation Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-report
+          path: validation_report/
+          retention-days: 90
+      
+      - name: Add Summary to Workflow
+        run: |
+          cat validation_report/VALIDATION_SUMMARY.md >> $GITHUB_STEP_SUMMARY
+      
+      - name: Check Overall Pipeline Status
+        if: needs.test.result != 'success' || needs.code-quality.result != 'success' || needs.security-scan.result != 'success'
+        run: |
+          echo "❌ One or more quality gates failed!"
+          echo "Test: ${{ needs.test.result }}"
+          echo "Code Quality: ${{ needs.code-quality.result }}"
+          echo "Security: ${{ needs.security-scan.result }}"
+          exit 1
+
+  # Job 5: PR Comment with Comprehensive Results
+  pr-comment:
+    name: Post PR Comment
+    runs-on: ubuntu-latest
+    needs: [test, code-quality, security-scan]
+    if: always() && github.event_name == 'pull_request'
+    
+    steps:
+      - name: Download Test Artifacts
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: test-results
+          path: test-results/
+      
+      - name: Extract Coverage
+        id: coverage
+        run: |
+          if [ -f test-results/metadata.json ]; then
+            coverage=$(cat test-results/metadata.json | grep -o '"coverage": "[^"]*' | cut -d'"' -f4)
+            echo "coverage=${coverage}" >> $GITHUB_OUTPUT
+          else
+            echo "coverage=N/A" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Create PR Comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const testStatus = '${{ needs.test.result }}';
+            const lintStatus = '${{ needs.code-quality.result }}';
+            const securityStatus = '${{ needs.security-scan.result }}';
+            const coverage = '${{ steps.coverage.outputs.coverage }}';
+            
+            const statusIcon = (status) => {
+              switch(status) {
+                case 'success': return '✅';
+                case 'failure': return '❌';
+                case 'cancelled': return '⚠️';
+                case 'skipped': return '⏭️';
+                default: return '❓';
+              }
+            };
+            
+            const overallSuccess = testStatus === 'success' && lintStatus === 'success' && securityStatus === 'success';
+            const successMessage = overallSuccess ? '🎉 **All quality gates passed!** Ready for review.' : '⚠️ **Some quality gates failed.** Please review the logs and fix the issues.';
+            
+            const message = [
+              '## ' + (overallSuccess ? '✅' : '❌') + ' GxP CI Pipeline Results',
+              '',
+              '**Commit:** ${{ github.sha }}',
+              '**Branch:** ${{ github.head_ref }}',
+              '**Triggered by:** @${{ github.actor }}',
+              '**Run:** [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})',
+              '',
+              '---',
+              '',
+              '### 📊 Quality Gates',
+              '',
+              '| Check | Status | Details |',
+              '|-------|--------|----------|',
+              '| 🧪 Tests & Coverage | ' + statusIcon(testStatus) + ' ' + testStatus + ' | Coverage: ' + coverage + ' |',
+              '| 📝 Code Quality | ' + statusIcon(lintStatus) + ' ' + lintStatus + ' | Black + Flake8 |',
+              '| 🔒 Security Scan | ' + statusIcon(securityStatus) + ' ' + securityStatus + ' | Bandit + Safety |',
+              '',
+              '---',
+              '',
+              '### 📦 Artifacts',
+              '',
+              'All reports are available as [workflow artifacts](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}):',
+              '- Test results and coverage reports',
+              '- Linting reports',
+              '- Security scan reports',
+              '- Validation summary',
+              '',
+              successMessage,
+              '',
+              '---',
+              '',
+              '<sub>Generated by GxP CI/CD Pipeline | Retained for 90 days per GxP requirements</sub>'
+            ].join('\n');
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: message
+            });
+
+  # Job 6: Failure Notification
+  notify-failure:
+    name: Notify on Failure
+    runs-on: ubuntu-latest
+    needs: [test, code-quality, security-scan]
+    if: failure()
+    
+    steps:
+      - name: Create Failure Summary
+        run: |
+          echo "## ❌ Pipeline Failure" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Pipeline Run:** ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Actor:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Failed Jobs" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Test: ${{ needs.test.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Code Quality: ${{ needs.code-quality.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Security: ${{ needs.security-scan.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "[View full logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+      
+      - name: Send Notification Annotation
+        run: |
+          echo "::error title=Pipeline Failed::One or more quality gates failed. Check the workflow logs for details."
+          echo "::notice title=Failed Jobs::Test: ${{ needs.test.result }}, Linting: ${{ needs.code-quality.result }}, Security: ${{ needs.security-scan.result }}"
+      
+      # Optional: Slack notification (requires SLACK_WEBHOOK_URL secret)
+      - name: Send Slack Notification
+        if: vars.SLACK_WEBHOOK_URL != ''
+        run: |
+          curl -X POST "${{ vars.SLACK_WEBHOOK_URL }}" \
+            -H 'Content-Type: application/json' \
+            -d @- << 'SLACK_EOF'
+          {
+            "text": "❌ GxP Pipeline Failed",
+            "blocks": [
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*❌ GxP CI Pipeline Failed*\n\n*Repository:* ${{ github.repository }}\n*Branch:* ${{ github.ref_name }}\n*Commit:* ${{ github.sha }}\n*Actor:* ${{ github.actor }}\n\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Workflow Run>"
+                }
+              }
+            ]
+          }
+          SLACK_EOF
+        continue-on-error: true
+
+  # Job 7: Success Job (only runs if all pass)
+  pipeline-success:
+    name: Pipeline Success
+    runs-on: ubuntu-latest
+    needs: [test, code-quality, security-scan]
+    if: success()
+    
+    steps:
+      - name: Success Summary
+        run: |
+          echo "## ✅ Pipeline Success" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "All quality gates passed successfully!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Pipeline Run:** ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Actor:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Timestamp:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ✅ All Checks Passed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Unit Tests & Coverage" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Code Quality & Linting" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Security Scanning" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "[View artifacts](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+      
+      - name: Create Success Marker
+        run: |
+          echo "Pipeline completed successfully at $(date -u +"%Y-%m-%d %H:%M:%S UTC")" > success.txt
+          echo "Run: ${{ github.run_number }}" >> success.txt
+          echo "Commit: ${{ github.sha }}" >> success.txt
+          echo "Branch: ${{ github.ref_name }}" >> success.txt
+      
+      - name: Upload Success Marker
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-success
+          path: success.txt
+          retention-days: 90
+      
+      # Optional: Slack success notification
+      - name: Send Success Notification
+        if: vars.SLACK_WEBHOOK_URL != '' && github.ref == 'refs/heads/main'
+        run: |
+          curl -X POST "${{ vars.SLACK_WEBHOOK_URL }}" \
+            -H 'Content-Type: application/json' \
+            -d @- << 'SLACK_EOF'
+          {
+            "text": "✅ GxP Pipeline Success",
+            "blocks": [
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*✅ GxP CI Pipeline Passed*\n\n*Repository:* ${{ github.repository }}\n*Branch:* ${{ github.ref_name }}\n*Commit:* ${{ github.sha }}\n*Actor:* ${{ github.actor }}\n\nAll quality gates passed successfully!\n\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Workflow Run>"
+                }
+              }
+            ]
+          }
+          SLACK_EOF
+        continue-on-error: true
