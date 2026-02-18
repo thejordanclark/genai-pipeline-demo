@@ -42,7 +42,7 @@ safety check
 
 Pipelines run automatically on:
 
-- **Push to master/develop** - Full CI + Validation pipeline
+- **Push to main/develop** - Full CI + Validation pipeline
 - **Pull requests** - CI pipeline only
 - **Manual trigger** - Any pipeline with custom parameters
 
