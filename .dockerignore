@@ -1,0 +1,196 @@
+# ==============================================================================
+# Docker Ignore File - Clinical Validation System
+# ==============================================================================
+# This file specifies which files and directories should NOT be copied into
+# the Docker image during build. This improves:
+# - Build performance (faster uploads to Docker daemon)
+# - Image size (smaller images for storage/transfer)
+# - Security (prevents sensitive files from being included)
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Python Cache and Build Artifacts
+# ------------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ------------------------------------------------------------------------------
+# Testing and Coverage (generated at runtime)
+# ------------------------------------------------------------------------------
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# ------------------------------------------------------------------------------
+# Development Environment
+# ------------------------------------------------------------------------------
+.venv/
+venv/
+ENV/
+env/
+.env
+.envrc
+*.env
+.python-version
+
+# Devbox (Nix-based development environment - not needed in container)
+.devbox/
+devbox.lock
+
+# Virtual environments
+*.virtualenv
+
+# ------------------------------------------------------------------------------
+# IDE and Editor Files
+# ------------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+.project
+.pydevproject
+
+# ------------------------------------------------------------------------------
+# Version Control
+# ------------------------------------------------------------------------------
+.git/
+.gitignore
+.gitattributes
+.gitmodules
+
+# ------------------------------------------------------------------------------
+# CI/CD and GitHub Actions (not needed in container)
+# ------------------------------------------------------------------------------
+.github/
+.circleci/
+.travis.yml
+.gitlab-ci.yml
+azure-pipelines.yml
+Jenkinsfile
+
+# ------------------------------------------------------------------------------
+# Docker Files (avoid recursion)
+# ------------------------------------------------------------------------------
+docker/
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# ------------------------------------------------------------------------------
+# Documentation (build-time only, not needed at runtime)
+# ------------------------------------------------------------------------------
+docs/
+Scratch/
+*.md
+!README.md
+
+# Reports directory (will be generated at runtime, mounted as volume)
+reports/
+
+# ------------------------------------------------------------------------------
+# Logs (should be externalized via volume mounts)
+# ------------------------------------------------------------------------------
+*.log
+logs/
+*.log.*
+
+# ------------------------------------------------------------------------------
+# Temporary Files
+# ------------------------------------------------------------------------------
+tmp/
+temp/
+*.tmp
+*.bak
+*.backup
+*.swp
+
+# ------------------------------------------------------------------------------
+# OS-Specific Files
+# ------------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+*.lnk
+
+# ------------------------------------------------------------------------------
+# Sensitive Data (should never be in repo, but extra safety layer)
+# ------------------------------------------------------------------------------
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+secrets/
+credentials/
+.secrets
+.env.local
+.env.production
+
+# ------------------------------------------------------------------------------
+# Large Data Files (should be mounted as volumes, not copied)
+# ------------------------------------------------------------------------------
+data/
+*.csv
+*.xlsx
+*.xls
+*.db
+*.sqlite
+*.sqlite3
+*.parquet
+
+# Keep test data - small files needed for testing
+!test_data/
+!test_data/*.csv
+
+# ------------------------------------------------------------------------------
+# Node.js (if any frontend tools are used)
+# ------------------------------------------------------------------------------
+node_modules/
+npm-debug.log
+yarn-error.log
+package-lock.json
+yarn.lock
+
+# ------------------------------------------------------------------------------
+# Compiled Files
+# ------------------------------------------------------------------------------
+*.com
+*.class
+*.dll
+*.exe
+*.o
+*.so
+
+# ==============================================================================
+# End of .dockerignore
+# ==============================================================================

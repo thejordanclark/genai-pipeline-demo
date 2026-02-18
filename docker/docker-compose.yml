@@ -1,0 +1,411 @@
+# ==============================================================================
+# Docker Compose Configuration - Clinical Validation System
+# ==============================================================================
+# This file defines the services, networks, and volumes for the clinical
+# validation system. It simplifies container orchestration for development,
+# testing, and local validation environments.
+#
+# Usage:
+#   docker-compose up app          # Start application in foreground
+#   docker-compose up -d app       # Start application in background (daemon)
+#   docker-compose run --rm test   # Run test suite
+#   docker-compose run --rm validator  # Generate validation report
+#   docker-compose down            # Stop and remove containers
+#   docker-compose logs -f app     # Follow application logs
+#
+# ==============================================================================
+
+# Note: version field is now optional in Docker Compose v2
+# It's inferred from the compose file specification
+
+# ------------------------------------------------------------------------------
+# Services Definition
+# ------------------------------------------------------------------------------
+services:
+  
+  # ----------------------------------------------------------------------------
+  # Clinical Validation Application Service (Development Mode)
+  # ----------------------------------------------------------------------------
+  # Main application service with live code reloading for development.
+  # Mounts local source code so changes are immediately reflected.
+  # ----------------------------------------------------------------------------
+  app:
+    # Build configuration
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      labels:
+        - "compliance.validated=true"
+        - "gxp.environment=development"
+    
+    # Image name and tag
+    image: clinical-validation:1.0.0
+    
+    # Container name for easier management
+    container_name: clinical-validation-app
+    
+    # Environment variables for runtime configuration
+    environment:
+      # Python configuration
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      
+      # Application environment
+      - APP_ENV=development
+      - APP_VERSION=1.0.0
+      - LOG_LEVEL=INFO
+      
+      # Paths
+      - DATA_DIR=/app/data
+      - REPORTS_DIR=/app/reports
+      - VALIDATION_DIR=/app/validation
+      
+      # Feature flags (for future use)
+      - ENABLE_API=false
+      - ENABLE_MONITORING=false
+      
+      # GxP compliance tracking
+      - GXP_VALIDATION_MODE=development
+      - AUDIT_LOGGING=true
+    
+    # Volume mounts for data persistence and live code development
+    # Source:Target:Mode
+    volumes:
+      # === DEVELOPMENT: Mount source code for live editing ===
+      # Changes to local files will immediately reflect in container
+      - ../src:/app/src:rw
+      - ../tests:/app/tests:rw
+      - ../scripts:/app/scripts:rw
+      
+      # === DATA: Input data directory (read-only for data integrity) ===
+      - ../data:/app/data:ro
+      
+      # === OUTPUT: Named volumes for persistent reports ===
+      - validation-reports:/app/reports:rw
+      
+      # === VALIDATION: Logs and documentation ===
+      - ../validation:/app/validation:rw
+      
+      # === TEST DATA: Test datasets (read-only) ===
+      - ../test_data:/app/test_data:ro
+    
+    # Port exposure (for future API/web interface)
+    # Uncomment when adding web service
+    ports:
+      - "8000:8000"  # Main application port
+      - "8080:8080"  # Alternative/admin port
+    
+    # Working directory inside container
+    working_dir: /app
+    
+    # Keep container running for development
+    # Provides interactive Python environment
+    command: >
+      sh -c "
+        echo '======================================' &&
+        echo 'Clinical Validation System' &&
+        echo 'Environment: Development' &&
+        echo '======================================' &&
+        echo '' &&
+        python -c 'import sys; print(f\"Python {sys.version}\")' &&
+        echo '' &&
+        echo 'Running health check...' &&
+        python -c 'import src.clinical.patient_validator; import src.clinical.adverse_event_processor; print(\"✅ All modules loaded successfully\")' &&
+        echo '' &&
+        echo 'Application ready. Container will stay running.' &&
+        echo 'Use: docker exec -it clinical-validation-app /bin/bash' &&
+        echo '' &&
+        tail -f /dev/null
+      "
+    
+    # Security: Run as non-root user
+    # Note: Development mode allows write access for reports
+    user: "10001:10001"
+    
+    # Temporary filesystem mounts
+    tmpfs:
+      - /tmp
+      - /app/.pytest_cache
+    
+    # Resource limits (prevents resource exhaustion)
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    
+    # Restart policy - keep running in development
+    restart: unless-stopped
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; import src.clinical.patient_validator; sys.exit(0)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    
+    # Networks
+    networks:
+      - clinical-network
+
+  # ----------------------------------------------------------------------------
+  # Test Runner Service
+  # ----------------------------------------------------------------------------
+  # Dedicated service for running test suite with coverage reports.
+  # Use: docker-compose run --rm test
+  # ----------------------------------------------------------------------------
+  test:
+    # Use same image as app
+    image: clinical-validation:1.0.0
+    
+    # Container name
+    container_name: clinical-validation-test
+    
+    # Environment variables
+    environment:
+      - PYTHONUNBUFFERED=1
+      - APP_ENV=test
+      - LOG_LEVEL=DEBUG
+      - PYTEST_CURRENT_TEST=true
+    
+    # Volume mounts - same as app for consistency
+    volumes:
+      # Mount source code for testing latest changes
+      - ../src:/app/src:ro
+      - ../tests:/app/tests:ro
+      - ../scripts:/app/scripts:ro
+      - ../test_data:/app/test_data:ro
+      
+      # Output test reports
+      - validation-reports:/app/reports:rw
+    
+    working_dir: /app
+    
+    # Run comprehensive test suite
+    command: >
+      sh -c "
+        echo '======================================' &&
+        echo 'Running Test Suite' &&
+        echo '======================================' &&
+        pytest tests/ -v \
+          --cov=src \
+          --cov-report=term-missing \
+          --cov-report=html:reports/coverage \
+          --cov-report=json:reports/coverage.json \
+          --junit-xml=reports/test-results.xml \
+          --html=reports/test_report.html \
+          --self-contained-html &&
+        echo '' &&
+        echo '✅ Test suite completed' &&
+        echo 'Coverage report: reports/coverage/index.html' &&
+        echo 'Test report: reports/test_report.html'
+      "
+    
+    # Security: Run as non-root user
+    user: "10001:10001"
+    
+    # Temporary filesystem mounts
+    tmpfs:
+      - /tmp
+      - /app/.pytest_cache
+    
+    # Don't restart test container
+    restart: "no"
+    
+    # Networks
+    networks:
+      - clinical-network
+    
+    # Optional: Run tests in isolation
+    # profiles:
+    #   - testing
+
+  # ----------------------------------------------------------------------------
+  # Validation Report Generator Service
+  # ----------------------------------------------------------------------------
+  # Separate service for generating GxP validation reports.
+  # Use: docker-compose run --rm validator
+  # ----------------------------------------------------------------------------
+  validator:
+    # Use same image as app
+    image: clinical-validation:1.0.0
+    
+    # Container name
+    container_name: clinical-validator
+    
+    # Environment variables
+    environment:
+      - PYTHONUNBUFFERED=1
+      - APP_ENV=validation
+      - LOG_LEVEL=INFO
+      - GXP_VALIDATION_MODE=production
+    
+    # Volume mounts
+    volumes:
+      # Source code (read-only)
+      - ../src:/app/src:ro
+      - ../scripts:/app/scripts:ro
+      
+      # Reports and validation docs (read-write)
+      - validation-reports:/app/reports:rw
+      - ../validation:/app/validation:rw
+    
+    working_dir: /app
+    
+    # Generate comprehensive validation report
+    command: >
+      sh -c "
+        echo '======================================' &&
+        echo 'GxP Validation Report Generator' &&
+        echo '======================================' &&
+        echo '' &&
+        if [ -f reports/test-results.xml ]; then
+          echo '✅ Found test results, generating validation report...' &&
+          python scripts/generate_validation_report.py \
+            reports/test-results.xml \
+            reports/validation-report.md \
+            reports/coverage.json \
+            $$(date +%Y%m%d-%H%M%S) &&
+          echo '' &&
+          echo '✅ Validation report generated: reports/validation-report.md' &&
+          echo '✅ Generating audit log...' &&
+          python scripts/audit_log_generator.py \
+            reports/validation-report.md \
+            validation/audit-log-$$(date +%Y%m%d).json &&
+          echo '✅ Audit log generated'
+        else
+          echo '⚠️  No test results found at reports/test-results.xml' &&
+          echo 'Run tests first: docker-compose run --rm test' &&
+          exit 1
+        fi
+      "
+    
+    # Security: Run as non-root user
+    user: "10001:10001"
+    
+    # Temporary filesystem
+    tmpfs:
+      - /tmp
+    
+    # Run once and exit
+    restart: "no"
+    
+    # Networks
+    networks:
+      - clinical-network
+
+# ------------------------------------------------------------------------------
+# Networks Definition
+# ------------------------------------------------------------------------------
+# Isolated network for service communication
+networks:
+  clinical-network:
+    driver: bridge
+    labels:
+      - "compliance.validated=true"
+      - "gxp.system=clinical-validation"
+
+# ------------------------------------------------------------------------------
+# Volumes Definition
+# ------------------------------------------------------------------------------
+# Named volumes for persistent data (optional - currently using bind mounts)
+volumes:
+  # Persistent storage for validation evidence
+  validation-evidence:
+    driver: local
+    labels:
+      - "retention.period=7years"
+      - "compliance.required=true"
+  
+  # Persistent storage for reports
+  validation-reports:
+    driver: local
+    labels:
+      - "retention.period=7years"
+      - "compliance.required=true"
+
+# ==============================================================================
+# End of docker-compose.yml
+# ==============================================================================
+#
+# Common Commands for Development & Validation Workflows:
+#
+# === Development ===
+# 1. Start application in background (stays running):
+#    docker-compose up -d app
+#    docker-compose logs -f app
+#
+# 2. Access interactive shell in running container:
+#    docker exec -it clinical-validation-app /bin/bash
+#
+# 3. Run Python interactively:
+#    docker exec -it clinical-validation-app python
+#
+# 4. Stop application:
+#    docker-compose down
+#
+# === Testing ===
+# 5. Run full test suite with coverage:
+#    docker-compose run --rm test
+#
+# 6. Run specific test file:
+#    docker-compose run --rm test pytest tests/test_patient_validator.py -v
+#
+# 7. Run tests with specific markers:
+#    docker-compose run --rm test pytest -m "not slow" -v
+#
+# === Validation & Reporting ===
+# 8. Generate validation report (after running tests):
+#    docker-compose run --rm validator
+#
+# 9. Manual validation report generation:
+#    docker-compose run --rm validator \
+#      python scripts/generate_validation_report.py \
+#      reports/test-results.xml reports/validation-report.md
+#
+# === Complete Workflow ===
+# 10. Full CI/CD simulation:
+#     docker-compose build --no-cache
+#     docker-compose run --rm test
+#     docker-compose run --rm validator
+#     docker-compose up -d app
+#
+# === Troubleshooting ===
+# 11. View real-time logs:
+#     docker-compose logs -f app
+#     docker-compose logs -f test
+#
+# 12. Rebuild after Dockerfile changes:
+#     docker-compose build --no-cache
+#
+# 13. Clean up everything (containers, volumes, networks):
+#     docker-compose down -v
+#     docker system prune -f
+#
+# === Accessing Reports ===
+# 14. Reports are stored in the named volume 'validation-reports'
+#     Access from host: docker-compose run --rm app ls -la reports/
+#     Copy to host: docker cp clinical-validation-app:/app/reports ./local-reports
+#
+# 15. View report locations:
+#     docker volume inspect genai-pipeline-demo_validation-reports
+#
+# === Security Scanning ===
+# 16. Scan image for vulnerabilities:
+#     docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+#       aquasec/trivy image clinical-validation:1.0.0
+#
+# 17. Check container compliance:
+#     docker inspect clinical-validation:1.0.0 \
+#       --format='{{json .Config.Labels}}' | jq
+#
+# === Port Access (when API is enabled) ===
+# 18. Access application API (if implemented):
+#     curl http://localhost:8000/health
+#     curl http://localhost:8000/api/validate
+#
+# ==============================================================================
